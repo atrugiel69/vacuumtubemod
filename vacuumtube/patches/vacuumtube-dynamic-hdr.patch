@@ -1,0 +1,185 @@
+From f86384598f8b006b2b114413cd93ff6e2fbecbfe Mon Sep 17 00:00:00 2001
+From: atrugiel69 <atrugiel@protonmail.com>
+Date: Mon, 16 Nov 2026 02:46:40 +0100
+Subject: [PATCH] feat(wayland): export active HDR playback state for dynamic
+ compositor switching
+
+---
+ src/index.js                              |  20 +++++
+ src/preload/modules/hdr-state.js          | 103 ++++++++++++++++++++++
+ src/preload/modules/media-capabilities.js |   6 +-
+ 3 files changed, 127 insertions(+), 2 deletions(-)
+ create mode 100644 src/preload/modules/hdr-state.js
+
+diff --git a/src/index.js b/src/index.js
+index 22e6a93..3ffbed6 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -241,6 +241,26 @@ async function main() {
+     })
+ 
+     //config management on the web side
++    const hdrStatePath = path.join(userData, 'hdr_state')
++    const writeHdrState = (isHdr) => {
++        try {
++            const tmpPath = hdrStatePath + '.tmp'
++            fs.writeFileSync(tmpPath, isHdr ? 'hdr\n' : 'srgb\n')
++            fs.renameSync(tmpPath, hdrStatePath)
++        } catch (err) {
++            console.error('Failed to write hdr_state', err)
++        }
++    }
++    writeHdrState(false)
++
++    electron.ipcMain.on('hdr-state', (event, isHdr) => {
++        writeHdrState(!!isHdr)
++    })
++
++    electron.app.on('before-quit', () => {
++        writeHdrState(false)
++    })
++
+     electron.ipcMain.on('get-config', (event) => {
+         event.returnValue = config;
+     })
+diff --git a/src/preload/modules/hdr-state.js b/src/preload/modules/hdr-state.js
+new file mode 100644
+index 0000000..a517b02
+--- /dev/null
++++ b/src/preload/modules/hdr-state.js
+@@ -0,0 +1,103 @@
++const { ipcRenderer } = require('electron')
++
++function isHdrCodec(codec) {
++    let parts = codec.split('.')
++    let transfer = parts[0] === 'vp09' ? parts[6] : (parts[0] === 'av01' ? parts[7] : undefined)
++    return transfer === '16' || transfer === '18';
++}
++
++function isHdrMimeType(type) {
++    let params = String(type).split(';').slice(1)
++    for (let param of params) {
++        let [ key, ...rest ] = param.split('=')
++        if (key.trim().toLowerCase() === 'codecs') {
++            let value = rest.join('=').trim().replace(/^"|"$/g, '')
++            return value.split(',').some(c => isHdrCodec(c.trim()));
++        }
++    }
++    return false;
++}
++
++function isWatchPage() {
++    try {
++        return new URL(location.hash.substring(1), location.href).pathname === '/watch';
++    } catch {
++        return false;
++    }
++}
++
++module.exports = () => {
++    let streamIsHdr = false;
++    let lastReported = null;
++
++    function report(hdr) {
++        if (hdr === lastReported) return;
++        lastReported = hdr;
++        ipcRenderer.send('hdr-state', hdr)
++    }
++
++    function evaluate() {
++        if (!isWatchPage()) {
++            streamIsHdr = false;
++            report(false)
++            return;
++        }
++
++        let video = document.querySelector('.html5-video-player video')
++        if (!video || !video.currentSrc || video.ended) {
++            report(false)
++            return;
++        }
++
++        let player = document.querySelector('.html5-video-player')
++        let stats = player?.getVideoStats?.()
++        if (stats) {
++            let colorInfo = String(stats.color || '')
++            if (/smpte2084|arib-std-b67|bt2020/i.test(colorInfo)) {
++                streamIsHdr = true;
++            }
++        }
++
++        report(streamIsHdr)
++    }
++
++    function hookMediaSource(ctor) {
++        if (!ctor || !ctor.prototype || !ctor.prototype.addSourceBuffer) return;
++        const origAddSourceBuffer = ctor.prototype.addSourceBuffer;
++        ctor.prototype.addSourceBuffer = function (type) {
++            let mime = String(type).trim().toLowerCase()
++            if (mime.startsWith('video/')) {
++                streamIsHdr = isHdrMimeType(type);
++                queueMicrotask(evaluate)
++            }
++            return origAddSourceBuffer.call(this, type);
++        }
++    }
++
++    hookMediaSource(window.MediaSource)
++    hookMediaSource(window.ManagedMediaSource)
++
++    if (window.SourceBuffer && SourceBuffer.prototype.changeType) {
++        const origChangeType = SourceBuffer.prototype.changeType;
++        SourceBuffer.prototype.changeType = function (type) {
++            let mime = String(type).trim().toLowerCase()
++            if (mime.startsWith('video/')) {
++                streamIsHdr = isHdrMimeType(type);
++                queueMicrotask(evaluate)
++            }
++            return origChangeType.call(this, type);
++        }
++    }
++
++    window.addEventListener('hashchange', evaluate, true)
++    window.addEventListener('emptied', () => {
++        streamIsHdr = false;
++        evaluate()
++    }, true)
++    window.addEventListener('ended', evaluate, true)
++    window.addEventListener('loadedmetadata', evaluate, true)
++    window.addEventListener('playing', evaluate, true)
++
++    setInterval(evaluate, 500)
++    report(false)
++}
+diff --git a/src/preload/modules/media-capabilities.js b/src/preload/modules/media-capabilities.js
+index 78c768f..40e6807 100644
+--- a/src/preload/modules/media-capabilities.js
++++ b/src/preload/modules/media-capabilities.js
+@@ -3,6 +3,8 @@
+ //the player relies on this to find out what the device supports by checking that sane values are accepted and absurd ones (e.g. framerate=9999) are rejected
+ //chromium ignores these parameters and accepts everything, so every one of those checks fails, and the player falls back to assuming no hfr (capping videos at 720p30) and no hdr
+ 
++const configManager = require('../config')
++
+ const checks = {
+     width: (value) => Number(value) > 0 && Number(value) <= 7680, //8k width
+     height: (value) => Number(value) > 0 && Number(value) <= 4320, //8k height
+@@ -15,7 +17,7 @@ const checks = {
+ }
+ 
+ function isHdrDisplay() {
+-    return window.matchMedia('(dynamic-range: high)').matches;
++    return window.matchMedia('(dynamic-range: high)').matches || !!configManager.get().wayland_hdr;
+ }
+ 
+ function isHdrCodec(codec) {
+@@ -48,4 +50,4 @@ module.exports = () => {
+ 
+         return isTypeSupported(kept.join('; '));
+     }
+-}
+\ No newline at end of file
++}
+-- 
+2.43.0
+

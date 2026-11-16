@@ -1,0 +1,19 @@
+#!/bin/sh
+. /etc/profile
+
+addondir=$(dirname "$(dirname "$0")")
+export PATH="${addondir}/bin:${PATH}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+mkdir -p "${XDG_RUNTIME_DIR}" && chmod 700 "${XDG_RUNTIME_DIR}"
+
+CONF_DIR="/storage/.config/hypr"
+mkdir -p "${CONF_DIR}"
+if [ ! -f "${CONF_DIR}/hyprland.conf" ] && [ -f "${addondir}/config/hyprland.conf" ]; then
+  cp "${addondir}/config/hyprland.conf" "${CONF_DIR}/hyprland.conf"
+fi
+
+if [ $# -gt 0 ]; then
+  exec "${addondir}/bin/seatd-launch" -- "${addondir}/bin/Hyprland" -c "${CONF_DIR}/hyprland.conf" -- "$@"
+else
+  exec "${addondir}/bin/seatd-launch" -- "${addondir}/bin/Hyprland" -c "${CONF_DIR}/hyprland.conf"
+fi

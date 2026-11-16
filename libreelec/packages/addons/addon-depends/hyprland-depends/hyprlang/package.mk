@@ -1,0 +1,8 @@
+PKG_NAME="hyprlang"
+PKG_VERSION="0.6.8"
+PKG_LICENSE="LGPL-3.0-only"
+PKG_SITE="https://github.com/hyprwm/hyprlang"
+PKG_URL="https://github.com/hyprwm/hyprlang/archive/v${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain hyprutils"
+PKG_LONGDESC="The official implementation library for the hypr config language."
+PKG_BUILD_FLAGS="+pic"

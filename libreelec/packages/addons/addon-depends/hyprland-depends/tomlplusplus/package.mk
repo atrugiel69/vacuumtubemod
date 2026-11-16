@@ -1,0 +1,8 @@
+PKG_NAME="tomlplusplus"
+PKG_VERSION="3.4.0"
+PKG_LICENSE="MIT"
+PKG_SITE="https://marzer.github.io/tomlplusplus/"
+PKG_URL="https://github.com/marzer/tomlplusplus/archive/v${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain"
+PKG_LONGDESC="Header-only TOML config file parser and serializer for C++17."
+PKG_MESON_OPTS_TARGET="-Dbuild_tests=false -Dbuild_examples=false -Dgenerate_cmake_config=false"

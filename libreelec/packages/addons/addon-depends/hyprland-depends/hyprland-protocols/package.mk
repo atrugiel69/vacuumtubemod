@@ -1,0 +1,7 @@
+PKG_NAME="hyprland-protocols"
+PKG_VERSION="0.8.0"
+PKG_LICENSE="BSD-3-Clause"
+PKG_SITE="https://github.com/hyprwm/hyprland-protocols"
+PKG_URL="https://github.com/hyprwm/hyprland-protocols/archive/v${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain"
+PKG_LONGDESC="Wayland protocol extensions for Hyprland."

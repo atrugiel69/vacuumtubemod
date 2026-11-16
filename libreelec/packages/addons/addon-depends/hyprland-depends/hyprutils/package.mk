@@ -1,0 +1,8 @@
+PKG_NAME="hyprutils"
+PKG_VERSION="0.14.3"
+PKG_LICENSE="BSD-3-Clause"
+PKG_SITE="https://github.com/hyprwm/hyprutils"
+PKG_URL="https://github.com/hyprwm/hyprutils/archive/v${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain pixman"
+PKG_LONGDESC="Small C++ library for utilities used across the Hypr ecosystem."
+PKG_BUILD_FLAGS="+pic"

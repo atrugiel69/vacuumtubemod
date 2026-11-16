@@ -1,0 +1,8 @@
+PKG_NAME="glaze"
+PKG_VERSION="9.1.0"
+PKG_LICENSE="MIT"
+PKG_SITE="https://github.com/stephenberry/glaze"
+PKG_URL="https://github.com/stephenberry/glaze/archive/v${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain"
+PKG_LONGDESC="Extremely fast, in-memory JSON and interface library for modern C++."
+PKG_CMAKE_OPTS_TARGET="-Dglaze_ENABLE_SSL=OFF -DBUILD_TESTING=OFF -Dglaze_DEVELOPER_MODE=OFF"

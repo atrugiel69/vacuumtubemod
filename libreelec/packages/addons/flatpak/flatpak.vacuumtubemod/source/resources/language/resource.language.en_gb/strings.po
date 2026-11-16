@@ -1,0 +1,23 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgctxt "#30000"
+msgid "General"
+msgstr ""
+
+msgctxt "#30001"
+msgid "Runtime"
+msgstr ""
+
+msgctxt "#30002"
+msgid "Runtime release URL"
+msgstr ""
+
+msgctxt "#30003"
+msgid "Local runtime archive (overrides download if present)"
+msgstr ""
+
+msgctxt "#30004"
+msgid "Re-install runtime on next launch"
+msgstr ""

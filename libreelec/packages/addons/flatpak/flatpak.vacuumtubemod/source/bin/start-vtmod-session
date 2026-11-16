@@ -1,0 +1,89 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present Team LibreELEC (https://libreelec.tv)
+
+. /etc/profile
+
+VTMOD_ADDON_DIR=$(dirname "$(dirname "$0")")
+HYPR_DIR="/storage/.kodi/addons/tools.hyprland"
+EH_DIR="/storage/.kodi/addons/tools.externalhelper"
+FP_DIR="/storage/.kodi/addons/tools.flatpak"
+DATA_DIR="${VTMOD_DATA_DIR:-/storage/.kodi/userdata/addon_data/flatpak.vacuumtubemod}"
+USER_DATA_DIR="${VTMOD_USER_DATA_DIR:-${DATA_DIR}/userData}"
+APP_ID="${VTMOD_APP_ID:-rocks.shy.VacuumTubeMod}"
+
+setup_pulse() {
+  PA_UNLOAD=""
+  [ "${KODI_AUDIO_DEVICE%%:*}" != "ALSA" ] && return
+  AUDIODEV="${KODI_AUDIO_DEVICE#ALSA:}"
+  AUDIODEV="${AUDIODEV:-sysdefault}"
+  echo "using 6ch ALSA audio device ${AUDIODEV}"
+  PA_UNLOAD=$(pactl load-module module-alsa-sink device="${AUDIODEV}" name="vtmod" channels=6)
+  if [ $? -ne 0 ]; then
+    echo "failed to load 6ch pulseaudio module for alsa device ${AUDIODEV}"
+    PA_UNLOAD=""
+  fi
+}
+
+cleanup_pulse() {
+  if [ -n "${PA_UNLOAD}" ]; then
+    pactl unload-module "${PA_UNLOAD}"
+  fi
+  case "${KODI_AUDIO_DEVICE}" in
+    ALSA:*)
+      for _i in 1 2 3 4; do
+        _pcm_busy=0
+        if grep -vq '^closed$' /proc/asound/card*/pcm*/sub*/status 2>/dev/null; then
+          _pcm_busy=1
+        fi
+        _eld_ready=1
+        if ls /proc/asound/card*/eld* >/dev/null 2>&1; then
+          grep -q 'eld_valid[[:space:]]*1' /proc/asound/card*/eld* 2>/dev/null || _eld_ready=0
+        fi
+        [ "${_pcm_busy}" = "0" ] && [ "${_eld_ready}" = "1" ] && break
+        sleep 1
+      done
+      ;;
+  esac
+}
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+mkdir -p "${XDG_RUNTIME_DIR}"
+chmod 0700 "${XDG_RUNTIME_DIR}"
+
+RUNTIME_TMP_DIR="${XDG_RUNTIME_DIR}/vtmod-session"
+mkdir -p "${RUNTIME_TMP_DIR}"
+chmod 0700 "${RUNTIME_TMP_DIR}"
+
+if [ ! -f "/storage/.config/hypr/hyprland.conf" ] && [ -f "${HYPR_DIR}/config/hyprland.conf" ]; then
+  mkdir -p "/storage/.config/hypr"
+  cp "${HYPR_DIR}/config/hyprland.conf" "/storage/.config/hypr/hyprland.conf"
+fi
+
+SESSION_RUNNER="${RUNTIME_TMP_DIR}/session-runner.sh"
+cat <<EOF > "${SESSION_RUNNER}"
+#!/bin/sh
+unset LD_LIBRARY_PATH
+export VTMOD_HDR_STATE_FILE="${USER_DATA_DIR}/hdr_state"
+export KODI_FLATPAK_PULSEAUDIO=no
+"${VTMOD_ADDON_DIR}/bin/hdr-watcher.py" &
+HDR_WATCHER_PID=\$!
+"${EH_DIR}/bin/wayland-session-helper" \\
+  "${FP_DIR}/bin/flatpak-run-wrapper" --system --filesystem="${DATA_DIR}" "${APP_ID}" \\
+  --no-sandbox --try-supported-channel-layouts --disable-features=AudioServiceOutOfProcess \\
+  --user-data-dir="${USER_DATA_DIR}" --ozone-platform=wayland
+kill -TERM "\${HDR_WATCHER_PID}" 2>/dev/null || true
+python3 -c 'import glob, os, socket; socks = glob.glob(f"/run/user/{os.getuid()}/hypr/*/.socket.sock"); s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.connect(max(socks, key=os.path.getmtime)); s.sendall(b"dispatch exit")' 2>/dev/null || true
+sleep 1
+killall -TERM start-hyprland Hyprland 2>/dev/null || true
+EOF
+chmod 0700 "${SESSION_RUNNER}"
+
+setup_pulse
+HYPRLAND_SESSION_RUNNER="${SESSION_RUNNER}" LD_LIBRARY_PATH="${HYPR_DIR}/lib.private" \
+  "${HYPR_DIR}/bin/seatd-launch" -p "${HYPR_DIR}/bin/seatd" -- \
+  "${HYPR_DIR}/bin/start-hyprland" --path "${HYPR_DIR}/bin/Hyprland" -- \
+  --i-am-really-stupid -c "/storage/.config/hypr/hyprland.conf"
+cleanup_pulse
+
+rm -rf "${RUNTIME_TMP_DIR}"
