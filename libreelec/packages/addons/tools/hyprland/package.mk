@@ -1,6 +1,6 @@
 PKG_NAME="hyprland"
 PKG_VERSION="0.57.2"
-PKG_REV="2"
+PKG_REV="3"
 PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://hypr.land"
 PKG_URL=""
@@ -30,7 +30,7 @@ addon() {
     fi
   done
 
-  cp -d "${SYSROOT_PREFIX}/usr/lib/"{libpango,libgdk_pixbuf}*.so* "${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private/" 2>/dev/null || true
+  cp -d "${SYSROOT_PREFIX}/usr/lib/"{libpango,libgdk_pixbuf,libglslang}*.so* "${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private/" 2>/dev/null || true
 
   for f in "${ADDON_BUILD}/${PKG_ADDON_ID}/bin/"*; do
     if [ -f "${f}" ] && [ ! -L "${f}" ]; then
