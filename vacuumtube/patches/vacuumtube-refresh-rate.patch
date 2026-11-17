@@ -1,8 +1,8 @@
 From 6edf8570c75b79eb6afe6da61bb84d026559a2c9 Mon Sep 17 00:00:00 2001
 From: atrugiel69 <atrugiel@protonmail.com>
 Date: Tue, 17 Nov 2026 22:07:03 +0100
-Subject: [PATCH] feat(wayland): add automatic display refresh rate switching
- with pre-playback delay and Shorts toggle
+Subject: [PATCH 1/2] feat(wayland): add automatic display refresh rate
+ switching with pre-playback delay and Shorts toggle
 
 ---
  locale/en.json                         |  12 +
@@ -762,6 +762,277 @@ index b2767fc..f92a26b 100644
                  ]
              },
              {
+-- 
+2.43.0
+
+
+From 7db08135573577f4c058c6cba91430709361511a Mon Sep 17 00:00:00 2001
+From: atrugiel69 <atrugiel@protonmail.com>
+Date: Tue, 17 Nov 2026 22:27:18 +0100
+Subject: [PATCH 2/2] fix(wayland): parse MP4 trex duration and hook
+ adaptiveFormats via jsonModifiers
+
+---
+ src/preload/modules/hdr-state.js | 103 +++++++++++++++++++++----------
+ 1 file changed, 70 insertions(+), 33 deletions(-)
+
+diff --git a/src/preload/modules/hdr-state.js b/src/preload/modules/hdr-state.js
+index 8b244a6..b9c58bc 100644
+--- a/src/preload/modules/hdr-state.js
++++ b/src/preload/modules/hdr-state.js
+@@ -1,7 +1,9 @@
+ const { ipcRenderer } = require('electron')
+ const configManager = require('../config')
++const jsonMod = require('../util/jsonModifiers')
+ 
+ const STANDARD_RATES = [ 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 100, 119.88, 120 ]
++const itagFpsMap = new Map()
+ 
+ function canonicalFps(raw) {
+     const val = Number(raw)
+@@ -21,6 +23,23 @@ function canonicalFps(raw) {
+     return Number(val.toFixed(3));
+ }
+ 
++function recordAdaptiveFormats(json) {
++    const lists = [
++        json?.streamingData?.adaptiveFormats,
++        json?.playerResponse?.streamingData?.adaptiveFormats
++    ]
++    for (const formats of lists) {
++        if (!Array.isArray(formats)) continue;
++        for (const f of formats) {
++            const itag = Number(f?.itag)
++            const fps = canonicalFps(f?.fps)
++            if (itag > 0 && fps !== null) {
++                itagFpsMap.set(itag, fps)
++            }
++        }
++    }
++}
++
+ function isHdrCodec(codec) {
+     let parts = codec.split('.')
+     let transfer = parts[0] === 'vp09' ? parts[6] : (parts[0] === 'av01' ? parts[7] : undefined)
+@@ -85,7 +104,7 @@ function fourCC(view, offset) {
+     );
+ }
+ 
+-// Parse ISO-BMFF (MP4) boxes to extract timescale (mdhd) and sample duration (trex/tfhd/trun)
++// Parse ISO-BMFF (MP4) boxes for timescale (mdhd) and sample duration (trex/tfhd/trun)
+ function parseMp4Timing(bytes, state) {
+     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+     const containers = new Set([ 'moov', 'trak', 'mdia', 'mvex', 'moof', 'traf' ])
+@@ -122,8 +141,9 @@ function parseMp4Timing(bytes, state) {
+                     const ts = view.getUint32(body + 20)
+                     if (ts > 0) state.timescale = ts;
+                 }
+-            } else if (type === 'trex' && body + 20 <= boxEnd) {
+-                const dur = view.getUint32(body + 16)
++            } else if (type === 'trex' && body + 16 <= boxEnd) {
++                // FullBox (4) + track_ID (4) + default_sample_description_index (4) + default_sample_duration (4)
++                const dur = view.getUint32(body + 12)
+                 if (dur > 0) state.sampleDuration = dur;
+             } else if (type === 'tfhd' && body + 8 <= boxEnd) {
+                 const flags = (view.getUint8(body + 1) << 16) | (view.getUint8(body + 2) << 8) | view.getUint8(body + 3)
+@@ -232,6 +252,9 @@ function getMetadataFps(player) {
+     try {
+         const stats = player?.getVideoStats?.()
+         const fmt = Number(stats?.fmt)
++        if (fmt > 0 && itagFpsMap.has(fmt)) {
++            return itagFpsMap.get(fmt);
++        }
+         const formats = player?.getPlayerResponse?.()?.streamingData?.adaptiveFormats
+         if (fmt > 0 && Array.isArray(formats)) {
+             const match = formats.find((f) => Number(f.itag) === fmt && Number(f.fps) > 0)
+@@ -250,11 +273,16 @@ function isAdPlaying(player) {
+ }
+ 
+ module.exports = () => {
++    jsonMod.addModifier((json) => {
++        recordAdaptiveFormats(json)
++        return json;
++    })
++
+     let streamIsHdr = false;
+-    let streamFps = null;
++    let containerFps = null;
++    let measuredFps = null;
+     let lastPayloadKey = null;
+ 
+-    // Playback hold state for HDMI refresh-rate switching handshake
+     let appliedFpsForSession = null;
+     let appliedVideoId = null;
+     let holdActive = false;
+@@ -298,7 +326,6 @@ module.exports = () => {
+         }, Math.round(delaySec * 1000))
+     }
+ 
+-    // Intercept premature auto-play while waiting for HDMI mode-set delay
+     document.addEventListener('play', (e) => {
+         if (!holdActive || e.target !== holdVideo) return;
+         userPausedDuringHold = false;
+@@ -307,7 +334,6 @@ module.exports = () => {
+         } catch {}
+     }, true)
+ 
+-    // Respect explicit user pause/back key while hold is active
+     document.addEventListener('keydown', (e) => {
+         if (!holdActive) return;
+         if (e.key === ' ' || e.key === 'MediaPlayPause' || e.key === 'MediaStop' || e.key === 'Escape' || e.key === 'Backspace' || e.keyCode === 32769) {
+@@ -326,17 +352,22 @@ module.exports = () => {
+         ipcRenderer.send('hdr-state', { hdr: !!hdr, fps: normalizedFps, adjustFps })
+     }
+ 
+-    let rVfcVideo = null;
+-    function attachFrameRateProbe(video) {
+-        if (!video || video === rVfcVideo || typeof video.requestVideoFrameCallback !== 'function') return;
+-        rVfcVideo = video;
++    let probeGeneration = 0;
++    let probedKey = null;
++
++    function attachFrameRateProbe(video, videoId) {
++        if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
++        const key = `${videoId}|${video.currentSrc}`;
++        if (key === probedKey) return;
++        probedKey = key;
+ 
++        const gen = ++probeGeneration;
+         let startMediaTime = null;
+         let frames = 0;
+ 
+         const onFrame = (now, metadata) => {
+-            if (video !== rVfcVideo) return;
+-            if (streamFps !== null) return; // Already resolved from container or adaptiveFormats
++            if (gen !== probeGeneration || !video.isConnected) return;
++            if (containerFps !== null && measuredFps !== null) return;
+ 
+             if (!video.paused && !video.ended && metadata && typeof metadata.mediaTime === 'number') {
+                 if (startMediaTime === null || metadata.mediaTime < startMediaTime) {
+@@ -348,7 +379,7 @@ module.exports = () => {
+                     if (frames >= 12 && elapsed >= 0.2) {
+                         const detected = canonicalFps(frames / elapsed)
+                         if (detected !== null) {
+-                            streamFps = detected;
++                            measuredFps = detected;
+                             evaluate()
+                             return;
+                         }
+@@ -373,11 +404,11 @@ module.exports = () => {
+         if (!videoId) {
+             clearHold(false)
+             streamIsHdr = false;
+-            streamFps = null;
++            containerFps = null;
++            measuredFps = null;
++            probedKey = null;
+             appliedVideoId = null;
+-            if (appliedFpsForSession !== null) {
+-                appliedFpsForSession = null;
+-            }
++            appliedFpsForSession = null;
+             report(false, null)
+             return;
+         }
+@@ -404,22 +435,21 @@ module.exports = () => {
+             }
+         }
+ 
+-        if (streamFps === null) {
+-            streamFps = getMetadataFps(player)
++        const metaFps = getMetadataFps(player)
++        if (containerFps === null && measuredFps === null) {
++            attachFrameRateProbe(video, videoId)
+         }
+ 
+-        if (streamFps === null) {
+-            attachFrameRateProbe(video)
+-        }
++        const effectiveFps = containerFps ?? measuredFps ?? metaFps;
+ 
+-        if (adjustFps && streamFps !== null) {
+-            const needsModeSwitch = streamFps !== appliedFpsForSession;
++        if (adjustFps && effectiveFps !== null) {
++            const needsModeSwitch = effectiveFps !== appliedFpsForSession;
+             const isNewVideo = videoId !== appliedVideoId;
+ 
+             if (needsModeSwitch || isNewVideo) {
+                 appliedVideoId = videoId;
+                 if (needsModeSwitch) {
+-                    appliedFpsForSession = streamFps;
++                    appliedFpsForSession = effectiveFps;
+                     const delaySec = Math.max(0, Math.min(10, Number(cfg.wayland_refresh_rate_delay) || 0))
+                     if (delaySec > 0) {
+                         startHold(video, delaySec)
+@@ -429,7 +459,6 @@ module.exports = () => {
+         } else if (!adjustFps) {
+             clearHold(true)
+             if (isShort && skipShorts && cfg.wayland_refresh_rate) {
+-                // Keep desktop refresh rate (or restore it if coming straight from a regular video)
+                 const restoreDesktop = appliedFpsForSession !== null;
+                 appliedFpsForSession = null;
+                 appliedVideoId = null;
+@@ -447,7 +476,7 @@ module.exports = () => {
+             }
+         }
+ 
+-        report(streamIsHdr, streamFps)
++        report(streamIsHdr, effectiveFps)
+     }
+ 
+     function hookSourceBuffer() {
+@@ -467,7 +496,7 @@ module.exports = () => {
+                     }
+                     if (detected !== null) {
+                         this._vtFps = detected;
+-                        streamFps = detected;
++                        containerFps = detected;
+                         queueMicrotask(evaluate)
+                     }
+                 }
+@@ -486,7 +515,9 @@ module.exports = () => {
+                     this._vtFps = null;
+                     this._vtMp4State = null;
+                     streamIsHdr = isHdrMimeType(type)
+-                    streamFps = null;
++                    containerFps = null;
++                    measuredFps = null;
++                    probedKey = null;
+                     queueMicrotask(evaluate)
+                 }
+                 return origChangeType.call(this, type);
+@@ -506,7 +537,9 @@ module.exports = () => {
+                 sb._vtFps = null;
+                 sb._vtMp4State = null;
+                 streamIsHdr = isHdrMimeType(type)
+-                streamFps = null;
++                containerFps = null;
++                measuredFps = null;
++                probedKey = null;
+                 queueMicrotask(evaluate)
+             }
+             return sb;
+@@ -518,14 +551,18 @@ module.exports = () => {
+     hookMediaSource(window.ManagedMediaSource)
+ 
+     window.addEventListener('hashchange', () => {
+-        streamFps = null;
++        containerFps = null;
++        measuredFps = null;
++        probedKey = null;
+         evaluate()
+     }, true)
+ 
+     window.addEventListener('emptied', () => {
+         clearHold(false)
+         streamIsHdr = false;
+-        streamFps = null;
++        containerFps = null;
++        measuredFps = null;
++        probedKey = null;
+         evaluate()
+     }, true)
+ 
 -- 
 2.43.0
 
