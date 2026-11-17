@@ -211,14 +211,24 @@ def ensure_flatpak_app() -> bool:
             log(f'build-export failed: {exp.stderr}', xbmc.LOGERROR)
             notify_error('Failed to register Flatpak app wrapper.')
             return False
-        inst = run_flatpak(
-            ['install', '--system', '--noninteractive', '-y', '--no-gpg-verify', repo_dir, APP_ID],
-            dbus=True,
+        rem = run_flatpak(
+            ['remote-add', '--system', '--if-not-exists', '--no-gpg-verify', 'vtmod-local', repo_dir]
         )
-        if inst.returncode != 0:
-            log(f'local flatpak install failed: {inst.stderr}', xbmc.LOGERROR)
-            notify_error('Failed to install Flatpak app wrapper.')
+        if rem.returncode != 0:
+            log(f'local flatpak remote-add failed: {rem.stderr}', xbmc.LOGERROR)
+            notify_error('Failed to register Flatpak app repository.')
             return False
+        try:
+            inst = run_flatpak(
+                ['install', '--system', '--noninteractive', '-y', 'vtmod-local', APP_ID],
+                dbus=True,
+            )
+            if inst.returncode != 0:
+                log(f'local flatpak install failed: {inst.stderr}', xbmc.LOGERROR)
+                notify_error('Failed to install Flatpak app wrapper.')
+                return False
+        finally:
+            run_flatpak(['remote-delete', '--system', '--force', 'vtmod-local'])
         return True
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
