@@ -13,6 +13,10 @@ STATE = os.environ.get(
     'VTMOD_HDR_STATE_FILE',
     '/storage/.kodi/userdata/addon_data/flatpak.vacuumtubemod/userData/hdr_state',
 )
+KODI_GUISETTINGS = os.environ.get(
+    'VTMOD_KODI_GUISETTINGS',
+    '/storage/.kodi/userdata/guisettings.xml',
+)
 LOG = '/tmp/vtmod-hdr-watcher.log'
 
 NTSC_PAIRS = {
@@ -25,6 +29,19 @@ NTSC_PAIRS = {
     119.88: 120.0,
     120.0: 119.88,
 }
+
+
+def get_max_bitdepth() -> int:
+    """Honor Kodi's videoscreen.maxbpc setting (0=Auto, 1=8-bit, 2=10-bit, 3=12-bit)."""
+    try:
+        with open(KODI_GUISETTINGS, encoding='utf-8', errors='replace') as f:
+            xml = f.read()
+        m = re.search(r'<setting id="videoscreen\.maxbpc"[^>]*>(\d+)</setting>', xml)
+        if m and m.group(1) == '1':
+            return 8
+    except OSError:
+        pass
+    return 10
 
 
 def find_sock() -> str | None:
@@ -114,9 +131,10 @@ def apply_display_state(
     sock_path: str,
     cm: str,
     fps_token: str | None,
+    bitdepth: int,
     default_rr_by_out: dict[str, str],
-    last_applied: tuple[str, str, str] | None,
-) -> tuple[str, str, str] | None:
+    last_applied: tuple[str, str, str, int] | None,
+) -> tuple[str, str, str, int] | None:
     monitors = json.loads(hypr_cmd(sock_path, 'j/monitors'))
     if not monitors:
         return last_applied
@@ -144,24 +162,27 @@ def apply_display_state(
             target_fps = None
         target_rr = pick_best_mode_rr(available, w, h, target_fps, default_rr)
 
-    desired = (out, cm, target_rr)
+    desired = (out, cm, target_rr, bitdepth)
     if desired == last_applied:
         return last_applied
 
     mode = f'{w}x{h}@{target_rr}'
     lua = (
         f'hl.monitor({{output="{out}",mode="{mode}",position="{x}x{y}",'
-        f'scale={scale},bitdepth=10,cm="{cm}",supports_wide_color=1,supports_hdr=1}})'
+        f'scale={scale},bitdepth={bitdepth},cm="{cm}",supports_wide_color=1,supports_hdr=1}})'
     )
     res = hypr_cmd(sock_path, f'eval {lua}')
     with open(LOG, 'a') as f:
-        f.write(f"{time.strftime('%H:%M:%S')} cm={cm} mode={mode} (req={fps_token}) -> {res}\n")
+        f.write(
+            f"{time.strftime('%H:%M:%S')} cm={cm} bpc={bitdepth} mode={mode} (req={fps_token}) -> {res}\n"
+        )
     return desired if res == 'ok' else last_applied
 
 
 def main() -> None:
-    last_applied: tuple[str, str, str] | None = None
+    last_applied: tuple[str, str, str, int] | None = None
     default_rr_by_out: dict[str, str] = {}
+    bitdepth = get_max_bitdepth()
 
     while True:
         sock = find_sock()
@@ -169,7 +190,7 @@ def main() -> None:
             cm, fps_token = parse_state()
             try:
                 last_applied = apply_display_state(
-                    sock, cm, fps_token, default_rr_by_out, last_applied
+                    sock, cm, fps_token, bitdepth, default_rr_by_out, last_applied
                 )
             except Exception as e:
                 with open(LOG, 'a') as f:

@@ -66,6 +66,7 @@ cat <<EOF > "${SESSION_RUNNER}"
 unset LD_LIBRARY_PATH
 export VTMOD_HDR_STATE_FILE="${USER_DATA_DIR}/hdr_state"
 export KODI_FLATPAK_PULSEAUDIO=no
+export KODI_DISPLAY_CONFIG="default"
 "${VTMOD_ADDON_DIR}/bin/hdr-watcher.py" &
 HDR_WATCHER_PID=\$!
 "${EH_DIR}/bin/wayland-session-helper" \\

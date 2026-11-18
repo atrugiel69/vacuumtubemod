@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="flatpak.vacuumtubemod"
-PKG_VERSION="1.0.0"
-PKG_REV="0"
+PKG_VERSION="1.1.0"
+PKG_REV="2"
 PKG_ARCH="x86_64"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/atrugiel69/vacuumtubemod"

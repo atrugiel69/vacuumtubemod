@@ -1,7 +1,7 @@
 From 6edf8570c75b79eb6afe6da61bb84d026559a2c9 Mon Sep 17 00:00:00 2001
 From: atrugiel69 <atrugiel@protonmail.com>
 Date: Tue, 17 Nov 2026 22:07:03 +0100
-Subject: [PATCH 1/2] feat(wayland): add automatic display refresh rate
+Subject: [PATCH 1/5] feat(wayland): add automatic display refresh rate
  switching with pre-playback delay and Shorts toggle
 
 ---
@@ -769,7 +769,7 @@ index b2767fc..f92a26b 100644
 From 7db08135573577f4c058c6cba91430709361511a Mon Sep 17 00:00:00 2001
 From: atrugiel69 <atrugiel@protonmail.com>
 Date: Tue, 17 Nov 2026 22:27:18 +0100
-Subject: [PATCH 2/2] fix(wayland): parse MP4 trex duration and hook
+Subject: [PATCH 2/5] fix(wayland): parse MP4 trex duration and hook
  adaptiveFormats via jsonModifiers
 
 ---
@@ -1033,6 +1033,319 @@ index 8b244a6..b9c58bc 100644
          evaluate()
      }, true)
  
+-- 
+2.43.0
+
+
+From 649abe61b1ff918230dcaf982dcf5c2a6994a1e1 Mon Sep 17 00:00:00 2001
+From: atrugiel69 <atrugiel@protonmail.com>
+Date: Wed, 18 Nov 2026 01:12:33 +0100
+Subject: [PATCH 3/5] fix(wayland): rely strictly on stream metadata for fps
+ and scope itag map per video
+
+---
+ src/preload/modules/hdr-state.js | 107 ++++++++-----------------------
+ 1 file changed, 28 insertions(+), 79 deletions(-)
+
+diff --git a/src/preload/modules/hdr-state.js b/src/preload/modules/hdr-state.js
+index b9c58bc..52fb0d5 100644
+--- a/src/preload/modules/hdr-state.js
++++ b/src/preload/modules/hdr-state.js
+@@ -24,17 +24,16 @@ function canonicalFps(raw) {
+ }
+ 
+ function recordAdaptiveFormats(json) {
+-    const lists = [
+-        json?.streamingData?.adaptiveFormats,
+-        json?.playerResponse?.streamingData?.adaptiveFormats
+-    ]
+-    for (const formats of lists) {
++    const responses = [ json, json?.playerResponse ].filter(Boolean)
++    for (const resp of responses) {
++        const vid = resp?.videoDetails?.videoId || '';
++        const formats = resp?.streamingData?.adaptiveFormats;
+         if (!Array.isArray(formats)) continue;
+         for (const f of formats) {
+             const itag = Number(f?.itag)
+             const fps = canonicalFps(f?.fps)
+             if (itag > 0 && fps !== null) {
+-                itagFpsMap.set(itag, fps)
++                itagFpsMap.set(`${vid}:${itag}`, fps)
+             }
+         }
+     }
+@@ -47,13 +46,10 @@ function isHdrCodec(codec) {
+ }
+ 
+ function isHdrMimeType(type) {
+-    let params = String(type).split(';').slice(1)
+-    for (let param of params) {
+-        let [ key, ...rest ] = param.split('=')
+-        if (key.trim().toLowerCase() === 'codecs') {
+-            let value = rest.join('=').trim().replace(/^"|"$/g, '')
+-            return value.split(',').some(c => isHdrCodec(c.trim()));
+-        }
++    let match = type.match(/codecs="([^"]+)"/i)
++    if (!match) return false;
++    for (let codec of match[1].split(',')) {
++        if (isHdrCodec(codec.trim())) return true;
+     }
+     return false;
+ }
+@@ -248,17 +244,27 @@ function parseWebmFps(bytes) {
+     return null;
+ }
+ 
+-function getMetadataFps(player) {
++function getMetadataFps(player, videoId) {
+     try {
+         const stats = player?.getVideoStats?.()
+         const fmt = Number(stats?.fmt)
+-        if (fmt > 0 && itagFpsMap.has(fmt)) {
+-            return itagFpsMap.get(fmt);
+-        }
+-        const formats = player?.getPlayerResponse?.()?.streamingData?.adaptiveFormats
+-        if (fmt > 0 && Array.isArray(formats)) {
+-            const match = formats.find((f) => Number(f.itag) === fmt && Number(f.fps) > 0)
+-            if (match) return canonicalFps(Number(match.fps));
++        const resp = player?.getPlayerResponse?.()
++        const respVid = resp?.videoDetails?.videoId || videoId || '';
++        if (fmt > 0) {
++            if (respVid && itagFpsMap.has(`${respVid}:${fmt}`)) {
++                return itagFpsMap.get(`${respVid}:${fmt}`);
++            }
++            if (videoId && itagFpsMap.has(`${videoId}:${fmt}`)) {
++                return itagFpsMap.get(`${videoId}:${fmt}`);
++            }
++            const formats = resp?.streamingData?.adaptiveFormats;
++            if (Array.isArray(formats)) {
++                const match = formats.find((f) => Number(f.itag) === fmt && Number(f.fps) > 0)
++                if (match) return canonicalFps(Number(match.fps));
++            }
++            if (itagFpsMap.has(`:${fmt}`)) {
++                return itagFpsMap.get(`:${fmt}`);
++            }
+         }
+     } catch {}
+     return null;
+@@ -280,7 +286,6 @@ module.exports = () => {
+ 
+     let streamIsHdr = false;
+     let containerFps = null;
+-    let measuredFps = null;
+     let lastPayloadKey = null;
+ 
+     let appliedFpsForSession = null;
+@@ -352,47 +357,6 @@ module.exports = () => {
+         ipcRenderer.send('hdr-state', { hdr: !!hdr, fps: normalizedFps, adjustFps })
+     }
+ 
+-    let probeGeneration = 0;
+-    let probedKey = null;
+-
+-    function attachFrameRateProbe(video, videoId) {
+-        if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
+-        const key = `${videoId}|${video.currentSrc}`;
+-        if (key === probedKey) return;
+-        probedKey = key;
+-
+-        const gen = ++probeGeneration;
+-        let startMediaTime = null;
+-        let frames = 0;
+-
+-        const onFrame = (now, metadata) => {
+-            if (gen !== probeGeneration || !video.isConnected) return;
+-            if (containerFps !== null && measuredFps !== null) return;
+-
+-            if (!video.paused && !video.ended && metadata && typeof metadata.mediaTime === 'number') {
+-                if (startMediaTime === null || metadata.mediaTime < startMediaTime) {
+-                    startMediaTime = metadata.mediaTime;
+-                    frames = 0;
+-                } else {
+-                    frames++;
+-                    const elapsed = metadata.mediaTime - startMediaTime;
+-                    if (frames >= 12 && elapsed >= 0.2) {
+-                        const detected = canonicalFps(frames / elapsed)
+-                        if (detected !== null) {
+-                            measuredFps = detected;
+-                            evaluate()
+-                            return;
+-                        }
+-                    }
+-                }
+-            }
+-
+-            video.requestVideoFrameCallback(onFrame)
+-        };
+-
+-        video.requestVideoFrameCallback(onFrame)
+-    }
+-
+     function evaluate() {
+         const cfg = configManager.get()
+         const playback = getPlaybackContext()
+@@ -405,8 +369,6 @@ module.exports = () => {
+             clearHold(false)
+             streamIsHdr = false;
+             containerFps = null;
+-            measuredFps = null;
+-            probedKey = null;
+             appliedVideoId = null;
+             appliedFpsForSession = null;
+             report(false, null)
+@@ -435,12 +397,7 @@ module.exports = () => {
+             }
+         }
+ 
+-        const metaFps = getMetadataFps(player)
+-        if (containerFps === null && measuredFps === null) {
+-            attachFrameRateProbe(video, videoId)
+-        }
+-
+-        const effectiveFps = containerFps ?? measuredFps ?? metaFps;
++        const effectiveFps = containerFps ?? getMetadataFps(player, videoId);
+ 
+         if (adjustFps && effectiveFps !== null) {
+             const needsModeSwitch = effectiveFps !== appliedFpsForSession;
+@@ -516,8 +473,6 @@ module.exports = () => {
+                     this._vtMp4State = null;
+                     streamIsHdr = isHdrMimeType(type)
+                     containerFps = null;
+-                    measuredFps = null;
+-                    probedKey = null;
+                     queueMicrotask(evaluate)
+                 }
+                 return origChangeType.call(this, type);
+@@ -538,8 +493,6 @@ module.exports = () => {
+                 sb._vtMp4State = null;
+                 streamIsHdr = isHdrMimeType(type)
+                 containerFps = null;
+-                measuredFps = null;
+-                probedKey = null;
+                 queueMicrotask(evaluate)
+             }
+             return sb;
+@@ -552,8 +505,6 @@ module.exports = () => {
+ 
+     window.addEventListener('hashchange', () => {
+         containerFps = null;
+-        measuredFps = null;
+-        probedKey = null;
+         evaluate()
+     }, true)
+ 
+@@ -561,8 +512,6 @@ module.exports = () => {
+         clearHold(false)
+         streamIsHdr = false;
+         containerFps = null;
+-        measuredFps = null;
+-        probedKey = null;
+         evaluate()
+     }, true)
+ 
+-- 
+2.43.0
+
+
+From 5cc21bd6bf973406d046da89122b7551635eda31 Mon Sep 17 00:00:00 2001
+From: atrugiel69 <atrugiel@protonmail.com>
+Date: Wed, 18 Nov 2026 02:23:33 +0100
+Subject: [PATCH 4/5] fix(wayland): detect initial Short playback via
+ reelWatchEndpoint before DOM update
+
+---
+ src/preload/modules/hdr-state.js | 25 +++++++++++++++++++++----
+ 1 file changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/src/preload/modules/hdr-state.js b/src/preload/modules/hdr-state.js
+index 52fb0d5..86787a6 100644
+--- a/src/preload/modules/hdr-state.js
++++ b/src/preload/modules/hdr-state.js
+@@ -1,9 +1,12 @@
+ const { ipcRenderer } = require('electron')
+ const configManager = require('../config')
+ const jsonMod = require('../util/jsonModifiers')
++const rcMod = require('../util/resolveCommandModifiers')
+ 
+ const STANDARD_RATES = [ 23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 100, 119.88, 120 ]
+ const itagFpsMap = new Map()
++const knownShortIds = new Set()
++let pendingShortId = null
+ 
+ function canonicalFps(raw) {
+     const val = Number(raw)
+@@ -65,19 +68,21 @@ function isShortsPlayback() {
+ }
+ 
+ function getPlaybackContext() {
+-    const isShort = isShortsPlayback()
++    const domIsShort = isShortsPlayback()
+     try {
+         const url = new URL(location.hash.substring(1), location.href)
+         if (url.pathname === '/watch') {
+-            return { videoId: url.searchParams.get('v') || '__watch__', isShort };
++            const vid = url.searchParams.get('v') || '';
++            const isShort = domIsShort || (vid ? knownShortIds.has(vid) : pendingShortId !== null);
++            return { videoId: vid || '__watch__', isShort };
+         }
+-        if (isShort) {
++        if (domIsShort) {
+             const parts = url.pathname.split('/').filter(Boolean)
+             const shortId = parts[0] === 'shorts' && parts[1] ? parts[1] : '__shorts__';
+             return { videoId: shortId, isShort: true };
+         }
+     } catch {}
+-    if (isShort) {
++    if (domIsShort) {
+         return { videoId: '__shorts__', isShort: true };
+     }
+     return null;
+@@ -279,6 +284,18 @@ function isAdPlaying(player) {
+ }
+ 
+ module.exports = () => {
++    rcMod.addInputModifier((c) => {
++        if (c?.reelWatchEndpoint?.videoId) {
++            const sid = String(c.reelWatchEndpoint.videoId)
++            knownShortIds.add(sid)
++            pendingShortId = sid;
++        } else if (c?.watchEndpoint?.videoId) {
++            knownShortIds.delete(String(c.watchEndpoint.videoId))
++            pendingShortId = null;
++        }
++        return c;
++    })
++
+     jsonMod.addModifier((json) => {
+         recordAdaptiveFormats(json)
+         return json;
+-- 
+2.43.0
+
+
+From 068312b27decec966ec7e0492aeaa19f9b30af71 Mon Sep 17 00:00:00 2001
+From: atrugiel69 <atrugiel@protonmail.com>
+Date: Wed, 18 Nov 2026 02:33:25 +0100
+Subject: [PATCH 5/5] fix(wayland): omit fps from hdr-state report when Short
+ refresh-rate skip is active
+
+---
+ src/preload/modules/hdr-state.js | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/preload/modules/hdr-state.js b/src/preload/modules/hdr-state.js
+index 86787a6..0cdde6a 100644
+--- a/src/preload/modules/hdr-state.js
++++ b/src/preload/modules/hdr-state.js
+@@ -450,7 +450,7 @@ module.exports = () => {
+             }
+         }
+ 
+-        report(streamIsHdr, effectiveFps)
++        report(streamIsHdr, adjustFps ? effectiveFps : null)
+     }
+ 
+     function hookSourceBuffer() {
 -- 
 2.43.0
 
