@@ -10,6 +10,12 @@ fi
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 LE_DIR=$(CDPATH= cd -- "$1" && pwd)
 
+cleanup() {
+  rm -rf "${LE_DIR}/packages/addons/tools/hyprland" \
+         "${LE_DIR}/packages/addons/flatpak/flatpak.vacuumtubemod"
+}
+trap cleanup EXIT
+
 cp -rf "${SCRIPT_DIR}/packages/addons/"* "${LE_DIR}/packages/addons/"
 cd "${LE_DIR}"
 PROJECT=Generic ARCH=x86_64 scripts/create_addon hyprland

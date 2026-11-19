@@ -1,9 +1,13 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present Team LibreELEC (https://libreelec.tv)
+
 PKG_NAME="hyprland"
 PKG_VERSION="0.57.2"
 PKG_REV="3"
 PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://hypr.land"
 PKG_URL=""
+PKG_MAINTAINER="atrugiel"
 PKG_DEPENDS_TARGET="toolchain seatd Hyprland"
 PKG_SECTION="tools"
 PKG_SHORTDESC="Hyprland Wayland compositor"
@@ -15,7 +19,7 @@ PKG_ADDON_NAME="Hyprland Compositor"
 PKG_ADDON_ICON_NAME="HYPRLAND"
 PKG_ADDON_ICON_SIZE="250"
 PKG_ADDON_PROJECTS="any !Generic-legacy"
-PKG_ADDON_VERSION="${ADDON_VERSION}.${PKG_REV}"
+PKG_ADDON_VERSION="1.1.0"
 
 addon() {
   mkdir -p "${ADDON_BUILD}/${PKG_ADDON_ID}/bin"
