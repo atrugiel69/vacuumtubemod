@@ -16,6 +16,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+rm -rf "${LE_DIR}"/target/addons/*/Generic/x86_64/tools.hyprland/*.zip \
+       "${LE_DIR}"/target/addons/*/Generic/x86_64/flatpak.vacuumtubemod/*.zip \
+       "${LE_DIR}"/build.LibreELEC-Generic.x86_64-*/.stamps/hyprland \
+       "${LE_DIR}"/build.LibreELEC-Generic.x86_64-*/.stamps/flatpak.vacuumtubemod
+
 cp -rf "${SCRIPT_DIR}/packages/addons/"* "${LE_DIR}/packages/addons/"
 cd "${LE_DIR}"
 PROJECT=Generic ARCH=x86_64 scripts/create_addon hyprland
