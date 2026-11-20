@@ -8,7 +8,7 @@ PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://hypr.land"
 PKG_URL=""
 PKG_MAINTAINER="atrugiel"
-PKG_DEPENDS_TARGET="toolchain seatd Hyprland"
+PKG_DEPENDS_TARGET="toolchain seatd Hyprland libX11 libXfixes libXrender libxcb"
 PKG_SECTION="tools"
 PKG_SHORTDESC="Hyprland Wayland compositor"
 PKG_LONGDESC="Hyprland dynamic tiling Wayland compositor addon for running standalone Wayland applications."
@@ -19,7 +19,7 @@ PKG_ADDON_NAME="Hyprland Compositor"
 PKG_ADDON_ICON_NAME="HYPRLAND"
 PKG_ADDON_ICON_SIZE="250"
 PKG_ADDON_PROJECTS="any !Generic-legacy"
-PKG_ADDON_VERSION="1.1.0"
+PKG_ADDON_VERSION="1.1.1"
 
 addon() {
   mkdir -p "${ADDON_BUILD}/${PKG_ADDON_ID}/bin"
@@ -28,7 +28,7 @@ addon() {
   [ -e "$(get_install_dir Hyprland)/usr/bin/start-hyprland" ] && cp -P $(get_install_dir Hyprland)/usr/bin/start-hyprland "${ADDON_BUILD}/${PKG_ADDON_ID}/bin/"
 
   mkdir -p "${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private"
-  for pkg in libtool aquamarine hyprwire hyprutils hyprlang hyprgraphics hyprcursor librsvg seatd wayland libXcursor libdisplay-info tomlplusplus; do
+  for pkg in libtool aquamarine hyprwire hyprutils hyprlang hyprgraphics hyprcursor librsvg seatd wayland libXcursor libX11 libXfixes libXrender libxcb libdisplay-info tomlplusplus; do
     if [ -d "$(get_install_dir ${pkg})/usr/lib" ]; then
       cp -d $(get_install_dir ${pkg})/usr/lib/*.so* "${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private/" 2>/dev/null || true
     fi
