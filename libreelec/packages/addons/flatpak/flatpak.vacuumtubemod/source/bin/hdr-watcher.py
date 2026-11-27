@@ -83,6 +83,31 @@ def parse_state() -> tuple[str, str | None]:
         return 'srgb', None
 
 
+def is_compatible_current_rr(cur_rr_val: float, target_fps: float) -> bool:
+    """Return True if cur_rr_val is an exact or clean multiple of target_fps."""
+    candidates = [target_fps]
+    alt = NTSC_PAIRS.get(round(target_fps, 3))
+    if alt is not None:
+        candidates.append(alt)
+
+    # 120Hz (or 119.88Hz): keep for 120, 60, 30, 24fps (and NTSC equivalents)
+    if abs(cur_rr_val - 120.0) <= 0.2:
+        return any(
+            abs(c - r) <= 0.1 for c in candidates for r in (120.0, 60.0, 30.0, 24.0)
+        )
+    # 100Hz: keep for 100, 50, 25fps
+    if abs(cur_rr_val - 100.0) <= 0.2:
+        return any(abs(c - r) <= 0.1 for c in candidates for r in (100.0, 50.0, 25.0))
+    # 60Hz (or 59.94Hz): keep for 60, 30fps (and NTSC equivalents)
+    if abs(cur_rr_val - 60.0) <= 0.2:
+        return any(abs(c - r) <= 0.1 for c in candidates for r in (60.0, 30.0))
+    # 50Hz: keep for 50, 25fps
+    if abs(cur_rr_val - 50.0) <= 0.2:
+        return any(abs(c - r) <= 0.1 for c in candidates for r in (50.0, 25.0))
+
+    return False
+
+
 def pick_best_mode_rr(
     available_modes: list[str],
     w: int,
@@ -134,6 +159,7 @@ def apply_display_state(
     bitdepth: int,
     default_rr_by_out: dict[str, str],
     last_applied: tuple[str, str, str, int] | None,
+    session_state: dict[str, bool],
 ) -> tuple[str, str, str, int] | None:
     monitors = json.loads(hypr_cmd(sock_path, 'j/monitors'))
     if not monitors:
@@ -142,7 +168,8 @@ def apply_display_state(
     m = next((x for x in monitors if x.get('focused')), monitors[0])
     out = m.get('name', 'HDMI-A-1')
     w, h = int(m.get('width', 3840)), int(m.get('height', 2160))
-    cur_rr = format_rr(float(m.get('refreshRate', 60)))
+    cur_rr_val = float(m.get('refreshRate', 60))
+    cur_rr = format_rr(cur_rr_val)
     x, y = int(m.get('x', 0)), int(m.get('y', 0))
     scale = f"{float(m.get('scale', 1)):g}"
     available = m.get('availableModes') or []
@@ -154,13 +181,28 @@ def apply_display_state(
     if fps_token is None:
         target_rr = cur_rr
     elif fps_token == 'auto':
-        target_rr = default_rr
+        if session_state.get('played_video'):
+            # Video stopped: switch back to 120Hz (if available) to minimize future switches
+            target_rr = pick_best_mode_rr(available, w, h, 120.0, default_rr)
+        else:
+            # Opening flatpak: do not switch if already at 120, 100, 60, or 50Hz
+            if any(abs(cur_rr_val - r) <= 0.2 for r in (120.0, 100.0, 60.0, 50.0)):
+                target_rr = cur_rr
+            else:
+                target_rr = default_rr
     else:
         try:
             target_fps = float(fps_token)
         except ValueError:
             target_fps = None
-        target_rr = pick_best_mode_rr(available, w, h, target_fps, default_rr)
+        if target_fps is not None:
+            session_state['played_video'] = True
+            if is_compatible_current_rr(cur_rr_val, target_fps):
+                target_rr = cur_rr
+            else:
+                target_rr = pick_best_mode_rr(available, w, h, target_fps, default_rr)
+        else:
+            target_rr = default_rr
 
     desired = (out, cm, target_rr, bitdepth)
     if desired == last_applied:
@@ -182,6 +224,7 @@ def apply_display_state(
 def main() -> None:
     last_applied: tuple[str, str, str, int] | None = None
     default_rr_by_out: dict[str, str] = {}
+    session_state: dict[str, bool] = {'played_video': False}
     bitdepth = get_max_bitdepth()
 
     while True:
@@ -190,7 +233,7 @@ def main() -> None:
             cm, fps_token = parse_state()
             try:
                 last_applied = apply_display_state(
-                    sock, cm, fps_token, bitdepth, default_rr_by_out, last_applied
+                    sock, cm, fps_token, bitdepth, default_rr_by_out, last_applied, session_state
                 )
             except Exception as e:
                 with open(LOG, 'a') as f:
@@ -198,6 +241,7 @@ def main() -> None:
         else:
             last_applied = None
             default_rr_by_out.clear()
+            session_state['played_video'] = False
         time.sleep(0.25)
 
 
