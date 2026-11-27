@@ -15,9 +15,9 @@ Standalone Kodi add-ons and runtime patches for running [Vacuum Tube](https://gi
    - Install **Flatpak** (`tools.flatpak`) and **External programs helper** (`tools.externalhelper`) from the official LibreELEC Add-on repository.
 2. **Download the two add-on `.zip` files** from the [latest Release](https://github.com/atrugiel69/vacuumtubemod/releases/latest):
    - `tools.hyprland-1.1.1.zip`
-   - `flatpak.vacuumtubemod-1.1.1.zip`
+   - `flatpak.vacuumtubemod-1.2.0.zip`
 3. **Install both `.zip` files in Kodi**:
-   - Go to **Add-ons -> Install from zip file** and install `tools.hyprland-1.1.1.zip` first, then `flatpak.vacuumtubemod-1.1.1.zip`.
+   - Go to **Add-ons -> Install from zip file** and install `tools.hyprland-1.1.1.zip` first, then `flatpak.vacuumtubemod-1.2.0.zip`.
 4. **First Launch**:
    - Open **VacuumTube Mod** from Kodi Program Add-ons.
    - On first run, it prompts to install `org.freedesktop.Platform` (if not already present) and automatically downloads `vacuumtube-mod-runtime-x86_64.tar.gz` from the latest GitHub Release into `/storage/.kodi/userdata/addon_data/flatpak.vacuumtubemod/runtime/` (or extracts `/storage/vacuumtube-mod-runtime-x86_64.tar.gz` if placed there manually).

@@ -17,7 +17,7 @@ PKG_ADDON_NAME="VacuumTube Mod"
 PKG_ADDON_TYPE="xbmc.python.script"
 PKG_ADDON_PROJECTS="any !Generic-legacy"
 PKG_ADDON_PROVIDES="executable"
-PKG_ADDON_VERSION="1.1.1"
+PKG_ADDON_VERSION="1.2.0"
 PKG_ADDON_REQUIRES="tools.flatpak:0.0.0 tools.hyprland:1.1.1"
 
 addon() {
