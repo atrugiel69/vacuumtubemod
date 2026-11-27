@@ -83,8 +83,15 @@ def parse_state() -> tuple[str, str | None]:
         return 'srgb', None
 
 
-def is_compatible_current_rr(cur_rr_val: float, target_fps: float) -> bool:
-    """Return True if cur_rr_val is an exact or clean multiple of target_fps."""
+def get_compatible_mode_rr(
+    available_modes: list[str],
+    w: int,
+    h: int,
+    cur_rr_val: float,
+    cur_rr: str,
+    target_fps: float,
+) -> str | None:
+    """Return exact available mode rate string if cur_rr_val is a clean multiple of target_fps."""
     candidates = [target_fps]
     alt = NTSC_PAIRS.get(round(target_fps, 3))
     if alt is not None:
@@ -92,20 +99,22 @@ def is_compatible_current_rr(cur_rr_val: float, target_fps: float) -> bool:
 
     # 120Hz (or 119.88Hz): keep for 120, 60, 30, 24fps (and NTSC equivalents)
     if abs(cur_rr_val - 120.0) <= 0.2:
-        return any(
-            abs(c - r) <= 0.1 for c in candidates for r in (120.0, 60.0, 30.0, 24.0)
-        )
+        if any(abs(c - r) <= 0.1 for c in candidates for r in (120.0, 60.0, 30.0, 24.0)):
+            return pick_best_mode_rr(available_modes, w, h, 120.0, cur_rr)
     # 100Hz: keep for 100, 50, 25fps
-    if abs(cur_rr_val - 100.0) <= 0.2:
-        return any(abs(c - r) <= 0.1 for c in candidates for r in (100.0, 50.0, 25.0))
+    elif abs(cur_rr_val - 100.0) <= 0.2:
+        if any(abs(c - r) <= 0.1 for c in candidates for r in (100.0, 50.0, 25.0)):
+            return pick_best_mode_rr(available_modes, w, h, 100.0, cur_rr)
     # 60Hz (or 59.94Hz): keep for 60, 30fps (and NTSC equivalents)
-    if abs(cur_rr_val - 60.0) <= 0.2:
-        return any(abs(c - r) <= 0.1 for c in candidates for r in (60.0, 30.0))
+    elif abs(cur_rr_val - 60.0) <= 0.2:
+        if any(abs(c - r) <= 0.1 for c in candidates for r in (60.0, 30.0)):
+            return pick_best_mode_rr(available_modes, w, h, 60.0, cur_rr)
     # 50Hz: keep for 50, 25fps
-    if abs(cur_rr_val - 50.0) <= 0.2:
-        return any(abs(c - r) <= 0.1 for c in candidates for r in (50.0, 25.0))
+    elif abs(cur_rr_val - 50.0) <= 0.2:
+        if any(abs(c - r) <= 0.1 for c in candidates for r in (50.0, 25.0)):
+            return pick_best_mode_rr(available_modes, w, h, 50.0, cur_rr)
 
-    return False
+    return None
 
 
 def pick_best_mode_rr(
@@ -197,8 +206,9 @@ def apply_display_state(
             target_fps = None
         if target_fps is not None:
             session_state['played_video'] = True
-            if is_compatible_current_rr(cur_rr_val, target_fps):
-                target_rr = cur_rr
+            compat_rr = get_compatible_mode_rr(available, w, h, cur_rr_val, cur_rr, target_fps)
+            if compat_rr is not None:
+                target_rr = compat_rr
             else:
                 target_rr = pick_best_mode_rr(available, w, h, target_fps, default_rr)
         else:
