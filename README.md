@@ -3,7 +3,7 @@
 Standalone Kodi add-ons and runtime patches for running [Vacuum Tube](https://github.com/shy1132/VacuumTube) on **LibreELEC 13 (`Generic.x86_64`)** with:
 
 - **Per-video Dynamic SDR <-> HDR10 switching** via a self-contained **Hyprland 0.57.2** Wayland compositor add-on (`tools.hyprland`) and real-time stream detection (`hdr_state` + `hdr-watcher.py`), keeping menus and SDR videos in SDR while switching the display to HDR10 only during PQ/HLG HDR playback, and honoring Kodi's `videoscreen.maxbpc` setting.
-- **Automatic Display Refresh Rate Matching** (`23.976`–`120 Hz` with NTSC fractional pairing, configurable pre-playback hold delay, and YouTube Shorts skip option) parsed directly from stream container headers and player metadata. 1.2.0 release brings added logic to minimize refresh rate switching, leveraging clean multiples (i.e., 120Hz working fine for 60fps, 30fps, and 24fps content).
+- **Automatic Display Refresh Rate Matching** (`23.976`–`120 Hz` with NTSC fractional pairing, configurable pre-playback hold delay, and YouTube Shorts skip option) parsed directly from stream container headers and player metadata. 1.2.1 release brings added logic to minimize refresh rate switching, leveraging clean multiples (i.e., 120Hz working fine for 60fps, 30fps, and 24fps content) and avoid switching back when already outputting a smooth refresh rate (50Hz and above).
 - **5.1 Surround Sound (Dolby Digital Plus / E-AC-3 & AC-3)** via a custom **Electron 44.5.1** (`libffmpeg.so`) runtime and a 6-channel PulseAudio ALSA sink.
 - **Zero-conflict isolation**: Does not modify LibreELEC's `tools.externalhelper` add-on or Flathub's official `rocks.shy.VacuumTube` installation.
 

@@ -83,6 +83,25 @@ def parse_state() -> tuple[str, str | None]:
         return 'srgb', None
 
 
+def get_available_rates(available_modes: list[str], w: int, h: int) -> list[tuple[float, str]]:
+    prefix = f'{w}x{h}@'
+    rates: list[tuple[float, str]] = []
+    for entry in available_modes:
+        if entry.startswith(prefix):
+            m = re.match(r'^(\d+)x(\d+)@([0-9.]+)', entry)
+            if m:
+                r_str = m.group(3)
+                rates.append((float(r_str), r_str))
+    return rates
+
+
+def find_mode_rate(rates: list[tuple[float, str]], target: float, tol: float = 0.05) -> str | None:
+    matches = [r for r in rates if abs(r[0] - target) <= tol]
+    if matches:
+        return min(matches, key=lambda r: abs(r[0] - target))[1]
+    return None
+
+
 def get_compatible_mode_rr(
     available_modes: list[str],
     w: int,
@@ -91,28 +110,25 @@ def get_compatible_mode_rr(
     cur_rr: str,
     target_fps: float,
 ) -> str | None:
-    """Return exact available mode rate string if cur_rr_val is a clean multiple of target_fps."""
-    candidates = [target_fps]
-    alt = NTSC_PAIRS.get(round(target_fps, 3))
-    if alt is not None:
-        candidates.append(alt)
+    """Return exact available mode rate string if cur_rr_val is an exact integer multiple of target_fps."""
+    rates = get_available_rates(available_modes, w, h)
 
-    # 120Hz (or 119.88Hz): keep for 120, 60, 30, 24fps (and NTSC equivalents)
-    if abs(cur_rr_val - 120.0) <= 0.2:
-        if any(abs(c - r) <= 0.1 for c in candidates for r in (120.0, 60.0, 30.0, 24.0)):
-            return pick_best_mode_rr(available_modes, w, h, 120.0, cur_rr)
-    # 100Hz: keep for 100, 50, 25fps
-    elif abs(cur_rr_val - 100.0) <= 0.2:
-        if any(abs(c - r) <= 0.1 for c in candidates for r in (100.0, 50.0, 25.0)):
-            return pick_best_mode_rr(available_modes, w, h, 100.0, cur_rr)
-    # 60Hz (or 59.94Hz): keep for 60, 30fps (and NTSC equivalents)
-    elif abs(cur_rr_val - 60.0) <= 0.2:
-        if any(abs(c - r) <= 0.1 for c in candidates for r in (60.0, 30.0)):
-            return pick_best_mode_rr(available_modes, w, h, 60.0, cur_rr)
-    # 50Hz: keep for 50, 25fps
-    elif abs(cur_rr_val - 50.0) <= 0.2:
-        if any(abs(c - r) <= 0.1 for c in candidates for r in (50.0, 25.0)):
-            return pick_best_mode_rr(available_modes, w, h, 50.0, cur_rr)
+    # Exact-family compatibility (no 1000/1001 cross-family mixing)
+    families: tuple[tuple[float, tuple[float, ...]], ...] = (
+        (120.0, (120.0, 60.0, 30.0, 24.0)),
+        (119.88, (119.88, 59.94, 29.97, 23.976)),
+        (100.0, (100.0, 50.0, 25.0)),
+        (60.0, (60.0, 30.0)),
+        (59.94, (59.94, 29.97)),
+        (50.0, (50.0, 25.0)),
+        (24.0, (24.0,)),
+        (23.98, (23.976,)),
+    )
+    for mode_hz, supported_fps in families:
+        if abs(cur_rr_val - mode_hz) <= 0.05:
+            if any(abs(target_fps - f) <= 0.02 for f in supported_fps):
+                return find_mode_rate(rates, mode_hz, tol=0.05) or cur_rr
+            return None
 
     return None
 
@@ -127,36 +143,41 @@ def pick_best_mode_rr(
     if target_fps is None:
         return fallback_rr
 
-    prefix = f'{w}x{h}@'
-    rates: list[tuple[float, str]] = []
-    for entry in available_modes:
-        if entry.startswith(prefix):
-            m = re.match(r'^(\d+)x(\d+)@([0-9.]+)', entry)
-            if m:
-                r_str = m.group(3)
-                rates.append((float(r_str), r_str))
-
+    rates = get_available_rates(available_modes, w, h)
     if not rates:
         return fallback_rr
 
-    # 1. Exact / near-exact match (e.g. 23.976 -> 23.98, 24 -> 24.00, 59.94 -> 59.94)
-    exact = [r for r in rates if abs(r[0] - target_fps) <= 0.05]
-    if exact:
-        return min(exact, key=lambda r: abs(r[0] - target_fps))[1]
+    # Minimal covering sets (exact integer multiples first; avoid 25/29.97/30Hz)
+    preferences: tuple[tuple[float, float, tuple[float, ...]], ...] = (
+        (23.976, 0.02, (119.88, 23.98, 120.0, 24.0)),
+        (24.0, 0.02, (120.0, 24.0, 119.88, 23.98)),
+        (25.0, 0.02, (100.0, 50.0, 25.0)),
+        (29.97, 0.02, (119.88, 59.94, 120.0, 60.0, 29.97)),
+        (30.0, 0.02, (120.0, 60.0, 119.88, 59.94, 30.0)),
+        (50.0, 0.02, (100.0, 50.0)),
+        (59.94, 0.02, (119.88, 59.94, 120.0, 60.0)),
+        (60.0, 0.02, (120.0, 60.0, 119.88, 59.94)),
+        (100.0, 0.05, (100.0, 50.0)),
+        (119.88, 0.05, (119.88, 59.94, 120.0, 60.0)),
+        (120.0, 0.05, (120.0, 60.0, 119.88, 59.94)),
+    )
+    for fps_ref, tol, cand_order in preferences:
+        if abs(target_fps - fps_ref) <= tol:
+            for cand in cand_order:
+                matched = find_mode_rate(rates, cand, tol=0.05)
+                if matched is not None:
+                    return matched
+            return fallback_rr
 
-    # 2. NTSC <-> integer pair fallback (e.g. 23.976 <-> 24, 59.94 <-> 60)
-    alt = NTSC_PAIRS.get(round(target_fps, 3))
-    if alt is not None:
-        pair_match = [r for r in rates if abs(r[0] - alt) <= 0.05]
-        if pair_match:
-            return min(pair_match, key=lambda r: abs(r[0] - alt))[1]
+    # Fallback for uncommon framerates: exact match, then integer multiple
+    exact = find_mode_rate(rates, target_fps, tol=0.05)
+    if exact is not None:
+        return exact
 
-    # 3. Integer multiple fallback (e.g. 25fps -> 50.00Hz, 24fps -> 48/120Hz)
     for mult in (2, 3, 4, 5):
-        cand = target_fps * mult
-        mult_match = [r for r in rates if abs(r[0] - cand) <= 0.1]
-        if mult_match:
-            return min(mult_match, key=lambda r: abs(r[0] - cand))[1]
+        mult_match = find_mode_rate(rates, target_fps * mult, tol=0.1)
+        if mult_match is not None:
+            return mult_match
 
     return fallback_rr
 
@@ -178,10 +199,11 @@ def apply_display_state(
     out = m.get('name', 'HDMI-A-1')
     w, h = int(m.get('width', 3840)), int(m.get('height', 2160))
     cur_rr_val = float(m.get('refreshRate', 60))
-    cur_rr = format_rr(cur_rr_val)
     x, y = int(m.get('x', 0)), int(m.get('y', 0))
     scale = f"{float(m.get('scale', 1)):g}"
     available = m.get('availableModes') or []
+    rates = get_available_rates(available, w, h)
+    cur_rr = find_mode_rate(rates, cur_rr_val, tol=0.05) or format_rr(cur_rr_val)
 
     if out not in default_rr_by_out:
         default_rr_by_out[out] = cur_rr
@@ -190,15 +212,13 @@ def apply_display_state(
     if fps_token is None:
         target_rr = cur_rr
     elif fps_token == 'auto':
-        if session_state.get('played_video'):
-            # Video stopped: switch back to 120Hz (if available) to minimize future switches
-            target_rr = pick_best_mode_rr(available, w, h, 120.0, default_rr)
+        # Lazy return: stay in any fluid UI mode (>=50Hz); only exit 23.98/24Hz
+        if cur_rr_val >= 49.0:
+            target_rr = cur_rr
+        elif abs(cur_rr_val - 23.98) <= 0.05:
+            target_rr = pick_best_mode_rr(available, w, h, 59.94, default_rr)
         else:
-            # Opening flatpak: do not switch if already at 120, 100, 60, or 50Hz
-            if any(abs(cur_rr_val - r) <= 0.2 for r in (120.0, 100.0, 60.0, 50.0)):
-                target_rr = cur_rr
-            else:
-                target_rr = default_rr
+            target_rr = pick_best_mode_rr(available, w, h, 60.0, default_rr)
     else:
         try:
             target_fps = float(fps_token)
